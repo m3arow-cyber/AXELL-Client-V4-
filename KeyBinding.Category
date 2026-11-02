@@ -1,0 +1,169 @@
+package com.axell;
+
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
+import org.lwjgl.glfw.GLFW;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * AXELL Client V4 - client-side utility mod.
+ * Features: blue menu, HUD, fullbright, zoom, waypoint marker.
+ * Every feature has its own rebindable key (Options > Controls > AXELL Client V4).
+ */
+public class AxellClient implements ClientModInitializer {
+    public static final String NAME = "AXELL Client V4";
+
+    // Blue theme (ARGB)
+    public static final int ACCENT = 0xFF3B82F6;
+    public static final int PANEL = 0xE00A1F44;
+    public static final int TITLE = 0xFF93C5FD;
+    private static final int HUD_BG = 0xB00A1F44;
+    private static final int TEXT_WHITE = 0xFFFFFFFF;
+
+    private static final int ZOOM_FOV = 30;
+
+    private static final KeyBinding.Category CATEGORY =
+            KeyBinding.Category.create(Identifier.of("axell", "main"));
+
+    // Feature state
+    public static boolean hud = true;
+    public static boolean fullbright = false;
+    public static boolean waypointHud = true;
+    public static BlockPos waypoint = null;
+
+    private static Double savedGamma = null;
+    private static Integer savedFov = null;
+
+    private static KeyBinding menuKey;
+    private static KeyBinding hudKey;
+    private static KeyBinding fullbrightKey;
+    private static KeyBinding zoomKey;
+    private static KeyBinding waypointKey;
+
+    @Override
+    public void onInitializeClient() {
+        menuKey = register("key.axell.menu", GLFW.GLFW_KEY_RIGHT_SHIFT);
+        hudKey = register("key.axell.hud", GLFW.GLFW_KEY_K);
+        fullbrightKey = register("key.axell.fullbright", GLFW.GLFW_KEY_L);
+        zoomKey = register("key.axell.zoom", GLFW.GLFW_KEY_Z);
+        waypointKey = register("key.axell.waypoint", GLFW.GLFW_KEY_N);
+
+        ClientTickEvents.END_CLIENT_TICK.register(AxellClient::onTick);
+        HudRenderCallback.EVENT.register((ctx, tickCounter) -> renderHud(ctx));
+        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> setFullbright(mc, false));
+    }
+
+    private static KeyBinding register(String translationKey, int defaultKey) {
+        return KeyBindingHelper.registerKeyBinding(
+                new KeyBinding(translationKey, InputUtil.Type.KEYSYM, defaultKey, CATEGORY));
+    }
+
+    private static void onTick(MinecraftClient mc) {
+        while (menuKey.wasPressed()) {
+            if (mc.currentScreen == null) {
+                mc.setScreen(new AxellMenuScreen());
+            }
+        }
+        while (hudKey.wasPressed()) {
+            setHud(!hud);
+        }
+        while (fullbrightKey.wasPressed()) {
+            setFullbright(mc, !fullbright);
+        }
+        while (waypointKey.wasPressed()) {
+            setWaypointHere(mc);
+        }
+
+        // Zoom: active only while the key is held and no screen is open
+        boolean zooming = zoomKey.isPressed() && mc.currentScreen == null;
+        if (zooming && savedFov == null) {
+            savedFov = mc.options.getFov().getValue();
+            mc.options.getFov().setValue(ZOOM_FOV);
+        } else if (!zooming && savedFov != null) {
+            mc.options.getFov().setValue(savedFov);
+            savedFov = null;
+        }
+    }
+
+    // ---- Feature setters (used by the keys and the menu) ----
+
+    public static void setHud(boolean on) {
+        hud = on;
+    }
+
+    public static void setWaypointHud(boolean on) {
+        waypointHud = on;
+    }
+
+    public static void setFullbright(MinecraftClient mc, boolean on) {
+        if (on == fullbright) {
+            return;
+        }
+        if (on) {
+            savedGamma = mc.options.getGamma().getValue();
+            mc.options.getGamma().setValue(1.0);
+        } else if (savedGamma != null) {
+            mc.options.getGamma().setValue(savedGamma);
+            savedGamma = null;
+        }
+        fullbright = on;
+    }
+
+    public static void setWaypointHere(MinecraftClient mc) {
+        if (mc.player != null) {
+            waypoint = mc.player.getBlockPos();
+        }
+    }
+
+    public static void clearWaypoint() {
+        waypoint = null;
+    }
+
+    // ---- HUD ----
+
+    private static void renderHud(DrawContext ctx) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (!hud || mc.options.hudHidden || mc.player == null || mc.textRenderer == null) {
+            return;
+        }
+
+        List<String> lines = new ArrayList<>();
+        lines.add(NAME);
+        lines.add("FPS: " + mc.getCurrentFps());
+        lines.add(String.format("XYZ: %.1f %.1f %.1f",
+                mc.player.getX(), mc.player.getY(), mc.player.getZ()));
+        if (waypoint != null && waypointHud) {
+            double dist = mc.player.getPos().distanceTo(Vec3d.ofCenter(waypoint));
+            lines.add(String.format("Waypoint: %d %d %d (%.0f m)",
+                    waypoint.getX(), waypoint.getY(), waypoint.getZ(), dist));
+        }
+
+        int width = 0;
+        for (String line : lines) {
+            width = Math.max(width, mc.textRenderer.getWidth(line));
+        }
+        int height = lines.size() * 10 + 6;
+
+        ctx.fill(4, 4, 14 + width, 4 + height, HUD_BG);
+        ctx.fill(4, 4, 6, 4 + height, ACCENT);
+
+        int y = 7;
+        for (int i = 0; i < lines.size(); i++) {
+            int color = (i == 0) ? TITLE : TEXT_WHITE;
+            ctx.drawTextWithShadow(mc.textRenderer, lines.get(i), 10, y, color);
+            y += 10;
+        }
+    }
+}
