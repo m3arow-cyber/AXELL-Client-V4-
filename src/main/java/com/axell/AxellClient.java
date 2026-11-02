@@ -35,7 +35,7 @@ public class AxellClient implements ClientModInitializer {
     private static final int ZOOM_FOV = 30;
 
     private static final KeyMapping.Category CATEGORY =
-            KeyMapping.Category.register(ResourceLocation.fromNamespaceAndPath("axell", "main"));
+            KeyMapping.Category.register(Identifier.fromNamespaceAndPath("axell", "main")
 
     // Feature state
     public static boolean hud = true;
